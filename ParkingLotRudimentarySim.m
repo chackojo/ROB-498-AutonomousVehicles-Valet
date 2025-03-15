@@ -99,7 +99,7 @@ end
 
 % Main simulation loop
 simulation_time = now;
-end_time = simulation_time + 2/24; % 2 hours simulation
+end_time = simulation_time + 24/24; % 2 hours simulation
 car_counter = 1;
 dt = 1/24/60; % 1 minute time steps
 
