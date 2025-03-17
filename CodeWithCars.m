@@ -25,6 +25,12 @@ wheel_positions = [-car_length/3, -car_width/2;  % Rear left
                   car_length/3, car_width/2;    % Front right
                   -car_length/3, car_width/2];  % Rear right
 
+% PID controller parameters
+pid_kp = 2.0;  % Proportional gain
+pid_ki = 0.5;  % Integral gain
+pid_kd = 0.1;  % Derivative gain
+pid_max_output = 50;  % Maximum controller output (RPM)
+
 % Calculate number of possible spots vertically
 num_spots = floor((lot_height-2*lane_width) / spot_width);
 
@@ -70,7 +76,7 @@ spot_assignments = zeros(num_spots, num_columns);  % Stores car IDs
 parking_spots = zeros(num_spots, num_columns);  % 0 = empty, 1 = occupied
 for i = 1:num_spots
     for j = 1:num_columns
-        parking_spots(i,j) = rand() < 0.95;  % 70% chance of being occupied
+        parking_spots(i,j) = rand() < 0.7;  % 70% chance of being occupied
     end
 end
 
@@ -100,8 +106,8 @@ function [spot_pos, spot_i, spot_j] = find_nearest_spot(car_pos, parking_spots, 
     end
 end
 
-% Function to calculate wheel speeds based on car movement
-function wheel_speeds = calculate_wheel_speeds(current_pos, prev_pos, orientation, dt, wheel_radius, wheel_positions)
+% Function to calculate target wheel speeds based on car movement
+function target_speeds = calculate_target_wheel_speeds(current_pos, prev_pos, orientation, dt, wheel_radius, wheel_positions)
     % Calculate car movement vector
     movement = current_pos - prev_pos;
     
@@ -111,23 +117,89 @@ function wheel_speeds = calculate_wheel_speeds(current_pos, prev_pos, orientatio
     % Convert orientation to radians
     orientation_rad = orientation * pi/180;
     
-    % Initialize wheel speeds array
-    wheel_speeds = zeros(4, 1);
+    % Calculate direction of movement
+    if norm(movement) > 0
+        movement_dir = movement / norm(movement);
+    else
+        movement_dir = [cos(orientation_rad), sin(orientation_rad)];
+    end
     
-    % Calculate wheel speeds
+    % Initialize target speeds array
+    target_speeds = zeros(4, 1);
+    
+    % Calculate turning radius if car is turning
+    % Get car heading vector
+    heading = [cos(orientation_rad), sin(orientation_rad)];
+    
+    % Calculate cross product to determine if turning left or right
+    cross_product = heading(1) * movement_dir(2) - heading(2) * movement_dir(1);
+    
+    % Calculate dot product to determine if moving forward or backward
+    dot_product = heading(1) * movement_dir(1) + heading(2) * movement_dir(2);
+    
+    % Wheel speed differentials for turning (simplified model)
+    wheel_speed_diff = 0;
+    
+    % If turning significantly
+    if abs(cross_product) > 0.1 && dot_product > 0
+        % Turning factor (positive for right turn, negative for left turn)
+        wheel_speed_diff = cross_product * 10; % Scale factor for differential
+    end
+    
+    % Calculate individual wheel speeds
     for i = 1:4
-        % Rotate wheel positions based on car orientation
-        rotated_x = wheel_positions(i,1) * cos(orientation_rad) - wheel_positions(i,2) * sin(orientation_rad);
-        rotated_y = wheel_positions(i,1) * sin(orientation_rad) + wheel_positions(i,2) * cos(orientation_rad);
+        % Base speed - all wheels get the same base speed
+        base_speed = car_speed / wheel_radius;
         
-        % Adjust wheel speeds based on turning radius
-        % For simplicity, we'll use car_speed for wheels in straight motion
-        % In a more complex model, inner wheels would rotate slower than outer wheels in turns
-        wheel_speeds(i) = car_speed / wheel_radius;  % Convert to rad/s
+        % Apply differential to left/right wheels when turning
+        if i == 1 || i == 2  % Left wheels
+            wheel_speed = base_speed - wheel_speed_diff;
+        else  % Right wheels
+            wheel_speed = base_speed + wheel_speed_diff;
+        end
+        
+        % Ensure speed is not negative
+        wheel_speed = max(0, wheel_speed);
+        
+        % Store the target speed
+        target_speeds(i) = wheel_speed;
     end
     
     % Convert to RPM
-    wheel_speeds = wheel_speeds * 60 / (2 * pi);
+    target_speeds = target_speeds * 60 / (2 * pi);
+end
+
+% PID controller for wheel speeds
+function [wheel_speeds, pid_errors, pid_integrals] = apply_pid_control(target_speeds, current_speeds, pid_errors, pid_integrals, dt, pid_kp, pid_ki, pid_kd, pid_max_output)
+    % Initialize output array
+    wheel_speeds = zeros(4, 1);
+    
+    % Apply PID control to each wheel
+    for i = 1:4
+        % Calculate error
+        error = target_speeds(i) - current_speeds(i);
+        
+        % Calculate integral term
+        pid_integrals(i) = pid_integrals(i) + error * dt;
+        
+        % Calculate derivative term
+        error_derivative = (error - pid_errors(i)) / dt;
+        
+        % Update error history
+        pid_errors(i) = error;
+        
+        % Calculate PID output
+        pid_output = pid_kp * error + pid_ki * pid_integrals(i) + pid_kd * error_derivative;
+        
+        % Apply limits to output
+        pid_output = min(max(pid_output, -pid_max_output), pid_max_output);
+        
+        % Update wheel speed
+        wheel_speeds(i) = current_speeds(i) + pid_output;
+        
+        % Ensure wheel speed is not negative
+        wheel_speeds(i) = max(0, wheel_speeds(i));
+    end
 end
 
 % Function to generate a path to a parking spot
@@ -232,7 +304,10 @@ function [car_states, waiting_queue] = process_car_entry(car_id, car_states, wai
                     'path', [], ...
                     'path_index', 1, ...
                     'target_spot', [], ...
-                    'wheel_speeds', [0, 0, 0, 0], ... % Add wheel speeds
+                    'wheel_speeds', [0, 0, 0, 0], ... % Current wheel speeds
+                    'target_wheel_speeds', [0, 0, 0, 0], ... % Target wheel speeds for PID
+                    'pid_errors', [0, 0, 0, 0], ... % PID error history
+                    'pid_integrals', [0, 0, 0, 0], ... % PID integral terms
                     'parking_time', now + (30 + rand()*30)/24/60); % Random stay duration (30-60 minutes)
     
     if isempty(car_states)
@@ -310,8 +385,11 @@ while simulation_time < end_time
                     
                     car_states(i).position = car_states(i).path(car_states(i).path_index,:);
                     
-                    % Calculate wheel speeds
-                    car_states(i).wheel_speeds = calculate_wheel_speeds(car_states(i).position, car_states(i).prev_position, car_states(i).orientation, dt, wheel_radius, wheel_positions);
+                    % Calculate target wheel speeds
+                    car_states(i).target_wheel_speeds = calculate_target_wheel_speeds(car_states(i).position, car_states(i).prev_position, car_states(i).orientation, dt, wheel_radius, wheel_positions);
+                    
+                    % Apply PID control
+                    [car_states(i).wheel_speeds, car_states(i).pid_errors, car_states(i).pid_integrals] = apply_pid_control(car_states(i).target_wheel_speeds, car_states(i).wheel_speeds, car_states(i).pid_errors, car_states(i).pid_integrals, dt, pid_kp, pid_ki, pid_kd, pid_max_output);
                 else
                     car_states(i).state = 'parked';
                     % Final position is center of parking spot
@@ -354,8 +432,11 @@ while simulation_time < end_time
                     
                     car_states(i).position = car_states(i).path(car_states(i).path_index,:);
                     
-                    % Calculate wheel speeds
-                    car_states(i).wheel_speeds = calculate_wheel_speeds(car_states(i).position, car_states(i).prev_position, car_states(i).orientation,  dt, wheel_radius, wheel_positions );
+                    % Calculate target wheel speeds
+                    car_states(i).target_wheel_speeds = calculate_target_wheel_speeds(car_states(i).position, car_states(i).prev_position, car_states(i).orientation, dt, wheel_radius, wheel_positions);
+                    
+                    % Apply PID control
+                    [car_states(i).wheel_speeds, car_states(i).pid_errors, car_states(i).pid_integrals] = apply_pid_control(car_states(i).target_wheel_speeds, car_states(i).wheel_speeds, car_states(i).pid_errors, car_states(i).pid_integrals, dt, pid_kp, pid_ki, pid_kd, pid_max_output);
                 else
                     car_states(i).state = 'exited';
                 end
@@ -466,7 +547,22 @@ while simulation_time < end_time
                     if car_states(i).wheel_speeds(w) > 0
                         % Format speed to 1 decimal place
                         speed_text = sprintf('%.1f', car_states(i).wheel_speeds(w));
-                        text(wheel_pos_x + 0.2, wheel_pos_y + 0.2, speed_text, 'FontSize', 7);
+                        
+                        % Determine text color based on difference between target and actual speed
+                        target = car_states(i).target_wheel_speeds(w);
+                        actual = car_states(i).wheel_speeds(w);
+                        speed_diff = abs(target - actual);
+                        
+                        % Use color coding to show PID control status
+                        if speed_diff < 1.0
+                            text_color = 'g'; % Green for good tracking
+                        elseif speed_diff < 5.0
+                            text_color = 'b'; % Blue for medium tracking
+                        else
+                            text_color = 'r'; % Red for poor tracking
+                        end
+                        
+                        text(wheel_pos_x + 0.2, wheel_pos_y + 0.2, speed_text, 'FontSize', 7, 'Color', text_color);
                     end
                 end
             else
