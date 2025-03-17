@@ -70,7 +70,7 @@ spot_assignments = zeros(num_spots, num_columns);  % Stores car IDs
 parking_spots = zeros(num_spots, num_columns);  % 0 = empty, 1 = occupied
 for i = 1:num_spots
     for j = 1:num_columns
-        parking_spots(i,j) = rand() < 0.95;  % 70% chance of being occupied
+        parking_spots(i,j) = rand() < 0.7;  % 70% chance of being occupied
     end
 end
 
@@ -355,7 +355,14 @@ while simulation_time < end_time
                     car_states(i).position = car_states(i).path(car_states(i).path_index,:);
                     
                     % Calculate wheel speeds
-                    car_states(i).wheel_speeds = calculate_wheel_speeds(car_states(i).position, car_states(i).prev_position, car_states(i).orientation,  dt, wheel_radius, wheel_positions );
+                    car_states(i).wheel_speeds = calculate_wheel_speeds(
+                        car_states(i).position, 
+                        car_states(i).prev_position, 
+                        car_states(i).orientation, 
+                        dt, 
+                        wheel_radius, 
+                        wheel_positions
+                    );
                 else
                     car_states(i).state = 'exited';
                 end
