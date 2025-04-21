@@ -27,7 +27,7 @@ car_width = 1.8;
 car_safety_radius = max(car_length, car_width) / 2 + 0.5; % For collision check
 
 % Obstacle Properties
-num_obstacles = 15; % Number of random obstacles (pedestrians)
+num_obstacles = 5; % Number of random obstacles (pedestrians)
 obstacle_radius = 0.5; % Radius of obstacles
 obstacle_safety_margin = 0.3; % Extra space around obstacles
 
@@ -226,7 +226,11 @@ while current_time < end_time
                         car_states(i).path = generate_path_to_spot(car_states(i).position, car_states(i).level, car_states(i).target_spot, column_x, lane_centers_x, lane_centers_y, spot_width, lane_width, spot_length, entrance_width, num_spots_per_row, ramp_zone_x, ramp_zone_y_lower);
                         car_states(i).path_index = 1;
                         car_states(i).state = 'driving_to_spot';
-
+                         % --- ADDED PRINT ---
+                        if car_id == 1
+                           fprintf('Car %d: Found spot [%d, %d, %d]. Path generated (length %d). State -> driving_to_spot\n', car_id, spot_r, spot_c, spot_l, size(car_states(i).path, 1));
+                        end
+                        % --- END ADDED PRINT ---
                         parking_spots(spot_r, spot_c, spot_l) = 1; % Mark occupied
                         spot_assignments(spot_r, spot_c, spot_l) = car_id;
                     else
@@ -289,6 +293,11 @@ while current_time < end_time
                 if collision && car_states(i).collision_check_timer <= 0
                      car_states(i).state = 'waiting';
                      car_states(i).collision_check_timer = 1 * dt_seconds / (24*3600); % Wait 1 sec real time
+                      % --- ADDED PRINT ---
+                     if car_id == 1
+                        fprintf('Car %d: Collision detected! State -> waiting\n', car_id);
+                     end
+                     % --- END ADDED PRINT ---
                 else
                     % Move car along path
                     if move_dist > 0
@@ -298,9 +307,19 @@ while current_time < end_time
                             car_states(i).path_index = car_states(i).path_index + 1;
                         else
                             car_states(i).position = car_states(i).position + (move_vector / move_dist) * max_move;
+                            % --- ADDED PRINT ---
+                            if car_id == 1
+                                fprintf('Car %d: Moving along path. Pos: [%.1f, %.1f], Path Index: %d/%d\n', car_id, car_states(i).position(1), car_states(i).position(2), car_states(i).path_index, size(car_states(i).path, 1));
+                            end
+                             % --- END ADDED PRINT ---
                         end
                     else % Already at the path point
                          car_states(i).path_index = car_states(i).path_index + 1;
+                         % --- ADDED PRINT ---
+                         if car_id == 1
+                            fprintf('Car %d: Reached path point. Path Index: %d/%d\n', car_id, car_states(i).path_index, size(car_states(i).path, 1));
+                         end
+                         % --- END ADDED PRINT ---
                     end
 
                     % If we were waiting, resume driving
@@ -391,6 +410,11 @@ while current_time < end_time
                  end
 
             case 'waiting'
+                % --- ADDED PRINT ---
+                 if car_id == 1 && car_states(i).collision_check_timer > 0 % Only print once when entering wait
+                     fprintf('Car %d: Entering waiting state (Timer: %.2f)\n', car_id, car_states(i).collision_check_timer * 24*3600);
+                 end
+                 % --- END ADDED PRINT ---
                  % Check if condition causing wait is resolved
                  current_pos = car_states(i).position; % Check current position
                  if car_states(i).collision_check_timer <= 0 % Only re-check if timer expired
@@ -529,7 +553,7 @@ while current_time < end_time
 
     drawnow limitrate; % Update plot efficiently
     % SLOW DOWN SIMULATION by increasing pause duration
-    pause(0.01); % Changed from 0.01 to 0.1 seconds pause per frame
+    pause(0.1); % Changed from 0.01 to 0.1 seconds pause per frame
 
     % 5. Advance Time
     current_time = current_time + dt;
@@ -637,7 +661,7 @@ function path = generate_path_to_spot(start_pos, start_level, target_spot_info, 
     waypoints = [waypoints; target_x, target_y, current_level];
 
     path = [];
-    num_interp_points = 15; % Increased points slightly for smoother visual path
+    num_interp_points = 5; % Increased points slightly for smoother visual path
     for i = 1:size(waypoints, 1)-1
         p1 = waypoints(i,:);
         p2 = waypoints(i+1,:);
@@ -697,7 +721,7 @@ function path = generate_exit_path(spot_pos, spot_level, target_spot_info, colum
     waypoints = [waypoints; entrance_width/2, -5, current_level];
 
      path = [];
-     num_interp_points = 15; % Increased points slightly
+     num_interp_points = 5; % Increased points slightly
      for i = 1:size(waypoints, 1)-1
          p1 = waypoints(i,:);
          p2 = waypoints(i+1,:);
